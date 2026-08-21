@@ -1,0 +1,77 @@
+# Bumps the manifest when a new surmise release appears. Runs nightly and on
+# demand; a run that finds nothing current does nothing. The hashes come from
+# the release's own checksums.txt rather than being recomputed, so the manifest
+# can never drift from what the release published.
+name: update
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # A current manifest is not a failure — it is the common case. The step
+      # exits non-zero on "nothing to do" and the two steps below key off that
+      # outcome rather than off the job's.
+      - name: Check for a newer release
+        id: check
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest=$(gh api repos/nxck2005/surmise/releases/latest --jq '.tag_name')
+          want=${latest#v}
+          have=$(jq -r .version surmise.json)
+          echo "have=$have want=$want" >> "$GITHUB_OUTPUT"
+          [ "$have" != "$want" ]
+
+      - name: Rewrite version and hashes from checksums.txt
+        if: steps.check.outcome == 'success'
+        env:
+          WANT: ${{ steps.check.outputs.want }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sums=$(curl -fsSL "https://github.com/nxck2005/surmise/releases/download/v$WANT/checksums.txt")
+          amd=$(grep 'windows_amd64\.zip' <<<"$sums" | awk '{print $1}')
+          arm=$(grep 'windows_arm64\.zip' <<<"$sums" | awk '{print $1}')
+          test -n "$amd" && test -n "$arm"
+
+          base="https://github.com/nxck2005/surmise/releases/download/v$WANT"
+          jq --arg v "$WANT" --arg amd "$amd" --arg arm "$arm" --arg base "$base" '
+            .version = $v
+            | .architecture."64bit".url = ($base + "/surmise_" + $v + "_windows_amd64.zip")
+            | .architecture."64bit".hash = $amd
+            | .architecture.arm64.url = ($base + "/surmise_" + $v + "_windows_arm64.zip")
+            | .architecture.arm64.hash = $arm
+          ' surmise.json > surmise.json.new
+          mv surmise.json.new surmise.json
+          jq -e --arg v "$WANT" '.version == $v' surmise.json > /dev/null
+
+      - name: Open the PR
+        if: steps.check.outcome == 'success'
+        env:
+          WANT: ${{ steps.check.outputs.want }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch="scoop-$WANT"
+          git config user.name "scoop-bucket bot"
+          git config user.email "bot@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -am "surmise $WANT"
+          git push origin "$branch"
+          gh pr create \
+            --title "surmise $WANT" \
+            --body "Bumped by the nightly checkver against [surmise releases](https://github.com/nxck2005/surmise/releases)." \
+            --head "$branch"

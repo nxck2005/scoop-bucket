@@ -1,0 +1,49 @@
+# The one thing a bucket must get right is that its manifest installs. This
+# proves it end to end on every change: real Scoop on a real Windows runner,
+# installing from the checked-out manifest, which downloads the release zips,
+# checks their sha256 against what the manifest claims, unpacks them and puts
+# the shim on PATH — then the binary has to say the version the manifest
+# promised.
+#
+# amd64 only: the runner's architecture picks the manifest entry it exercises,
+# and GitHub has no hosted arm64 Windows image yet. The arm64 hash comes from
+# the release's own checksums.txt in update.yml, so it cannot drift silently.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  install:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Scoop
+        shell: pwsh
+        run: |
+          irm get.scoop.sh -OutFile install_scoop.ps1
+          .\install_scoop.ps1 -RunAsAdmin
+          Add-Content $env:GITHUB_PATH "$env:USERPROFILE\scoop\shims"
+
+      - name: Install surmise from this bucket
+        shell: pwsh
+        run: |
+          scoop --version
+          scoop install .\surmise.json
+          if (-not (Get-Command surmise -ErrorAction SilentlyContinue)) {
+            throw "no surmise shim on PATH after install"
+          }
+
+      - name: The binary reports the version the manifest names
+        shell: pwsh
+        run: |
+          $want = (Get-Content surmise.json -Raw | ConvertFrom-Json).version
+          $got = (surmise -version) -join ' '
+          Write-Host "surmise -version -> $got"
+          if (-not ($got -match [regex]::Escape($want))) {
+            throw "manifest promises $want but the binary reports '$got'"
+          }
