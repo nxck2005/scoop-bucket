@@ -22,6 +22,10 @@ jobs:
       # A current manifest is not a failure — it is the common case. The step
       # exits non-zero on "nothing to do" and the two steps below key off that
       # outcome rather than off the job's.
+      #
+      # $GITHUB_OUTPUT is line-oriented, so each output gets its own line: both
+      # values on one line register a single output named "have" whose value is
+      # "… want=…", leaving `want` unset for the steps below.
       - name: Check for a newer release
         id: check
         continue-on-error: true
@@ -32,7 +36,10 @@ jobs:
           latest=$(gh api repos/nxck2005/surmise/releases/latest --jq '.tag_name')
           want=${latest#v}
           have=$(jq -r .version surmise.json)
-          echo "have=$have want=$want" >> "$GITHUB_OUTPUT"
+          {
+            echo "have=$have"
+            echo "want=$want"
+          } >> "$GITHUB_OUTPUT"
           [ "$have" != "$want" ]
 
       - name: Rewrite version and hashes from checksums.txt
