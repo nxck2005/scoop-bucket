@@ -73,6 +73,16 @@ jobs:
         run: |
           set -euo pipefail
           branch="scoop-$WANT"
+
+          # The manifest on main still looks behind while a bump PR is open, so
+          # the check above is true every night until it lands. Proposing the
+          # same bump again is not something to do, and failing over it would
+          # turn a normal state into a red run.
+          if gh pr view "$branch" --json state --jq '.state' 2>/dev/null | grep -q OPEN; then
+            echo "a bump PR for $branch is already open; nothing to do"
+            exit 0
+          fi
+
           git config user.name "scoop-bucket bot"
           git config user.email "bot@users.noreply.github.com"
           git checkout -b "$branch"
