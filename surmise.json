@@ -1,17 +1,17 @@
 {
-  "version": "0.6.3",
+  "version": "0.7.6",
   "description": "A word game for the terminal. Fast, themeable, remembers where you left off.",
   "homepage": "https://github.com/nxck2005/surmise",
   "license": "MIT",
   "notes": "Play: run 'surmise' in any terminal.",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/nxck2005/surmise/releases/download/v0.6.3/surmise_0.6.3_windows_amd64.zip",
-      "hash": "0cdc1f21f0432d6dcbd2fda5c05f3c6c5688b9cacec0848877341b2a36404a7b"
+      "url": "https://github.com/nxck2005/surmise/releases/download/v0.7.6/surmise_0.7.6_windows_amd64.zip",
+      "hash": "e40da79294c658b80f067347ef21105aa117027459ef1cba574a6817e738f48f"
     },
     "arm64": {
-      "url": "https://github.com/nxck2005/surmise/releases/download/v0.6.3/surmise_0.6.3_windows_arm64.zip",
-      "hash": "906bb7b6e2312a7226c5bebfc1685851a3c89a7f64c023d969da0de9935c2386"
+      "url": "https://github.com/nxck2005/surmise/releases/download/v0.7.6/surmise_0.7.6_windows_arm64.zip",
+      "hash": "650edf792e77889172fcb5dd93dd03630661c4e8a697a23ce42963c56e4c3730"
     }
   },
   "bin": "surmise.exe",
