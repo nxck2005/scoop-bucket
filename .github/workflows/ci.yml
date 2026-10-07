@@ -15,12 +15,24 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # update.yml calls this on its bump branch before it merges: a PR opened by
+  # the workflow's own token does not start this workflow by itself.
+  workflow_call:
+    inputs:
+      ref:
+        description: the branch to install from
+        required: true
+        type: string
 
 jobs:
   install:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Empty except when update.yml calls this, which means the event's
+          # own ref, as before.
+          ref: ${{ inputs.ref }}
 
       - name: Install Scoop
         shell: pwsh

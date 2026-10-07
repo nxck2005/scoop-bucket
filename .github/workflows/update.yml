@@ -1,7 +1,14 @@
-# Bumps the manifest when a new surmise release appears. Runs nightly and on
-# demand; a run that finds nothing current does nothing. The hashes come from
-# the release's own checksums.txt rather than being recomputed, so the manifest
-# can never drift from what the release published.
+# Bumps the manifest when a new surmise release appears, proves the bump
+# installs, and merges it. Runs nightly and on demand; a run that finds nothing
+# newer does nothing. The hashes come from the release's own checksums.txt
+# rather than being recomputed, so the manifest can never drift from what the
+# release published.
+#
+# It merges its own PR because a PR opened with the workflow's token does not
+# start ci.yml, so nothing else would ever test it — and an unmerged bump left
+# Scoop users on 0.6.3 while five of them waited. The verify job below is that
+# missing test: it calls ci.yml on the bump branch, and only a real install that
+# reports the promised version reaches the merge.
 name: update
 
 on:
@@ -13,14 +20,21 @@ permissions:
   contents: write
   pull-requests: write
 
+# A dispatch during the nightly run must not race it to the same branch.
+concurrency:
+  group: update
+  cancel-in-progress: false
+
 jobs:
   bump:
     runs-on: ubuntu-latest
+    outputs:
+      branch: ${{ steps.push.outputs.branch }}
     steps:
       - uses: actions/checkout@v7
 
       # A current manifest is not a failure — it is the common case. The step
-      # exits non-zero on "nothing to do" and the two steps below key off that
+      # exits non-zero on "nothing to do" and the steps below key off that
       # outcome rather than off the job's.
       #
       # $GITHUB_OUTPUT is line-oriented, so each output gets its own line: both
@@ -46,7 +60,6 @@ jobs:
         if: steps.check.outcome == 'success'
         env:
           WANT: ${{ steps.check.outputs.want }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           sums=$(curl -fsSL "https://github.com/nxck2005/surmise/releases/download/v$WANT/checksums.txt")
@@ -65,7 +78,11 @@ jobs:
           mv surmise.json.new surmise.json
           jq -e --arg v "$WANT" '.version == $v' surmise.json > /dev/null
 
-      - name: Open the PR
+      # The branch is rebuilt from main on every run and force-pushed, so a
+      # branch left by an earlier run always ends up holding exactly what this
+      # run computed. An open PR for it is reused rather than proposed again.
+      - name: Push the branch and open the PR
+        id: push
         if: steps.check.outcome == 'success'
         env:
           WANT: ${{ steps.check.outputs.want }}
@@ -74,21 +91,48 @@ jobs:
           set -euo pipefail
           branch="scoop-$WANT"
 
-          # The manifest on main still looks behind while a bump PR is open, so
-          # the check above is true every night until it lands. Proposing the
-          # same bump again is not something to do, and failing over it would
-          # turn a normal state into a red run.
-          if gh pr view "$branch" --json state --jq '.state' 2>/dev/null | grep -q OPEN; then
-            echo "a bump PR for $branch is already open; nothing to do"
-            exit 0
-          fi
-
           git config user.name "scoop-bucket bot"
           git config user.email "bot@users.noreply.github.com"
           git checkout -b "$branch"
           git commit -am "surmise $WANT"
-          git push origin "$branch"
-          gh pr create \
-            --title "surmise $WANT" \
-            --body "Bumped by the nightly checkver against [surmise releases](https://github.com/nxck2005/surmise/releases)." \
-            --head "$branch"
+          git push --force origin "$branch"
+
+          if gh pr view "$branch" --json state --jq '.state' 2>/dev/null | grep -q OPEN; then
+            echo "a PR for $branch is already open; reusing it"
+          else
+            gh pr create \
+              --title "surmise $WANT" \
+              --body "Bumped by the nightly checkver against [surmise releases](https://github.com/nxck2005/surmise/releases). The update workflow merges it once a real Scoop install of it passes." \
+              --head "$branch"
+          fi
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+  verify:
+    needs: bump
+    if: needs.bump.outputs.branch != ''
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.bump.outputs.branch }}
+
+  merge:
+    needs: [bump, verify]
+    runs-on: ubuntu-latest
+    steps:
+      # Only reached when the install on the branch passed. Every other open
+      # bump PR is for an older release, so it is closed rather than left to
+      # pile up: the manifest only ever needs the newest one.
+      - name: Merge the bump and close the ones it supersedes
+        env:
+          BRANCH: ${{ needs.bump.outputs.branch }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh pr merge "$BRANCH" --squash --delete-branch
+
+          gh pr list --state open --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("scoop-")) | .number' |
+          while read -r pr; do
+            gh pr close "$pr" --delete-branch \
+              --comment "Superseded by $BRANCH, which the update workflow verified and merged."
+          done
